@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<info>
+    <id>figdeckbridge</id>
+    <name>FigDeck Bridge</name>
+    <summary>Synchronisiere Figma-Kommentare automatisch mit Nextcloud Deck</summary>
+    <description>
+        <![CDATA[
+        FigDeck Bridge verbindet Figma und Nextcloud Deck.
+
+        🔹 Hauptfunktionen:
+        - Synchronisation von Figma-Kommentaren (inkl. Threads) in Deck-Karten  
+        - Unterstützung für mehrere Boards & Mappings  
+        - OAuth 2.0 Anbindung an Figma  
+        - Adminoberfläche für Konfiguration und manuelle Synchronisation  
+        - Optionale Cron-Synchronisation
+
+        Ideal für Teams, die Design-Feedback aus Figma direkt in Nextcloud-Workflows integrieren möchten.
+        ]]>
+    </description>
+
+    <version>0.6.1</version>
+    <licence>agpl</licence>
+    <author>Mikka @ zzzooo Studio</author>
+    <namespace>FigDeckBridge</namespace>
+    <category>integration</category>
+
+    <bugs>https://github.com/zzzooo-studio/figdeckbridge/issues</bugs>
+    <repository type="git">https://github.com/zzzooo-studio/figdeckbridge</repository>
+    <screenshot>https://cdn.zzzooo.studio/apps/figdeckbridge/screenshot.png</screenshot>
+    <website>https://zzzooo.studio</website>
+    <documentation>
+        <admin>https://zzzooo.studio/docs/figdeckbridge</admin>
+    </documentation>
+
+    <dependencies>
+        <nextcloud min-version="27" max-version="30"/>
+        <php min-version="8.1" max-version="8.3"/>
+    </dependencies>
+
+    <settings>
+        <admin>OCA\FigDeckBridge\Settings\Admin</admin>
+    </settings>
+
+    <bootstrap>OCA\FigDeckBridge\AppInfo\Application</bootstrap>
+</info>
