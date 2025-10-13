@@ -1,0 +1,33 @@
+# System
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+
+# PHP
+/vendor/
+/composer.lock
+/composer.phar
+
+# Nextcloud
+/data/
+/config/
+*.bak
+*.swp
+
+# Build / Cache
+node_modules/
+npm-debug.log*
+package-lock.json
+dist/
+build/
+*.map
+
+# OS
+Icon?
+ehthumbs.db
+Desktop.ini
+
+# GitHub metadata
+*.orig
