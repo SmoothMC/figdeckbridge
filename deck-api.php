@@ -12,9 +12,67 @@ function getFigmaAccessToken($config) {
     $clientSecret = $config['client_secret'] ?? '';
     $redirectUri = $config['redirect_uri'] ?? '';
 
-    if (!file_exists($tokenFile)) return null;
+    $data = null;
+    $saveToken = null;
 
-    $data = json_decode(file_get_contents($tokenFile), true);
+    if (is_readable($tokenFile)) {
+        $contents = file_get_contents($tokenFile);
+        $data = $contents !== false ? json_decode($contents, true) : null;
+        $saveToken = function (array $payload) use ($tokenFile): void {
+            file_put_contents($tokenFile, json_encode($payload, JSON_PRETTY_PRINT));
+        };
+    }
+
+    if (!$data && class_exists('\\OC')) {
+        try {
+            $appData = \OC::$server->get(\OCP\Files\IAppData::class);
+            $folder = $appData->getAppDataFolder('figdeckbridge');
+
+            if ($folder->fileExists('figma_token.json')) {
+                $file = $folder->getFile('figma_token.json');
+                $data = json_decode($file->getContent(), true);
+            }
+
+            if ($data) {
+                $saveToken = function (array $payload) use ($folder): void {
+                    $json = json_encode($payload, JSON_PRETTY_PRINT);
+                    if ($folder->fileExists('figma_token.json')) {
+                        $folder->getFile('figma_token.json')->putContent($json);
+                    } else {
+                        $folder->newFile('figma_token.json')->putContent($json);
+                    }
+                };
+            }
+        } catch (\Throwable $e) {
+            // ignore – we'll fall back to filesystem lookups below
+        }
+
+        if (!$data) {
+            try {
+                $configService = \OC::$server->getConfig();
+                $dataDir = $configService->getSystemValue('datadirectory', '');
+                $instanceId = \OC::$server->getSystemConfig()->getValue('instanceid', '');
+                if ($dataDir && $instanceId) {
+                    $fallbackPath = rtrim($dataDir, '/') . "/appdata_{$instanceId}/figdeckbridge/figma_token.json";
+                    if (is_readable($fallbackPath)) {
+                        $contents = file_get_contents($fallbackPath);
+                        $data = $contents !== false ? json_decode($contents, true) : null;
+                        if ($data) {
+                            $saveToken = function (array $payload) use ($fallbackPath): void {
+                                if (!is_dir(dirname($fallbackPath))) {
+                                    mkdir(dirname($fallbackPath), 0770, true);
+                                }
+                                file_put_contents($fallbackPath, json_encode($payload, JSON_PRETTY_PRINT));
+                            };
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                // ignore and keep default behaviour
+            }
+        }
+    }
+
     if (!$data) return null;
 
     $expiresIn = $data['expires_in'] ?? 3600;
@@ -46,7 +104,12 @@ function getFigmaAccessToken($config) {
     if (!$newData || !isset($newData['access_token'])) return null;
 
     $newData['created_at'] = time();
-    file_put_contents($tokenFile, json_encode($newData, JSON_PRETTY_PRINT));
+
+    if ($saveToken) {
+        $saveToken($newData);
+    } else {
+        file_put_contents($tokenFile, json_encode($newData, JSON_PRETTY_PRINT));
+    }
 
     return $newData['access_token'];
 }
