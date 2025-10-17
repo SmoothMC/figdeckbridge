@@ -1,6 +1,6 @@
 <div id="figdeckbridge-app" class="section">
   <h2>🧩 Figma-Deck Bridge</h2>
-  <p>Hier kannst du Figma-Projekte mit Nextcloud-Deck-Boards verbinden.</p>
+  <p>Verknüpfe Figma-Projekte und Dateien mit deinen Nextcloud-Deck-Boards.</p>
   <div id="app-content">Lade Daten …</div>
 </div>
 
