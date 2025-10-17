@@ -11,9 +11,9 @@ return [
     // ---------------------------------------------
     // 🔐 Nextcloud Deck Zugriff
     // ---------------------------------------------
-    'deck_url'     => 'https://cloud.zzzooo.studio',  // Basis-URL deiner Nextcloud
-    'deck_user'    => 'm0551b90',                      // Standard-User oder App-Passwort
-    'deck_token'   => 'dfT3Y-gbGqL-S2yZS-iEmod-JaaAo',               // App-spezifisches Passwort
+    'deck_url'     => 'https://cloud.example.com',  // Basis-URL deiner Nextcloud
+    'deck_user'    => 'app-user',                    // Standard-User oder App-Passwort
+    'deck_token'   => 'app-password',                // App-spezifisches Passwort
     'deck_api_path'=> '/index.php/apps/deck/api/v1.1',
 
     // ---------------------------------------------
@@ -30,6 +30,20 @@ return [
     // Diese Datei speichert, welches Figma-Projekt welchem Deck-Board zugeordnet ist.
     // Sie wird automatisch durch die Admin- oder API-Funktion geschrieben.
     'mapping_file' => __DIR__ . '/mappings.json',
+
+    // Optional: Fallback, falls keine Mapping-Datei existiert
+    'file_key'  => '',
+    'board_id'  => 0,
+    'stack_id'  => 0,
+
+    // Alternativ können hier mehrere Zuordnungen direkt hinterlegt werden
+    'file_mappings' => [
+        // [
+        //     'file_key' => 'AbCdEfGh123',
+        //     'board_id' => 12,
+        //     'stack_id' => 34,
+        // ],
+    ],
 
     // ---------------------------------------------
     // 📁 Lokale Datenspeicher
