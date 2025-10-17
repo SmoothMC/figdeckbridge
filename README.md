@@ -58,6 +58,25 @@ php occ app:enable figdeckbridge
 
 ---
 
+## 🧪 Nextcloud-Testumgebung
+
+Für lokale Experimente steht eine Docker-Compose-Umgebung bereit, die Nextcloud samt MariaDB und vorinstallierter Deck-App startet.
+
+1. Stelle sicher, dass [Docker](https://docs.docker.com/get-docker/) und Docker Compose ≥ v2.20 installiert sind.
+2. Starte die Umgebung:
+   ```bash
+   docker compose -f dev/docker-compose.nextcloud.yml up -d
+   ```
+3. Führe das Setup-Skript aus, um Deck zu aktivieren, ein Demo-Board anzulegen und die Umgebung zu prüfen:
+   ```bash
+   ./dev/nextcloud-init.sh
+   ```
+4. Öffne [http://localhost:8080](http://localhost:8080) und melde dich mit `admin` / `admin` an. Lege unter **Persönliche Einstellungen → Sicherheit** ein App-Passwort für FigDeck Bridge an.
+
+> ℹ️ Das Skript kann beliebig oft ausgeführt werden; es ist idempotent und prüft automatisch, ob Deck oder das Demo-Board bereits existieren.
+
+---
+
 ## 📄 Lizenz
 
 Veröffentlicht unter der [MIT-Lizenz](LICENSE).
