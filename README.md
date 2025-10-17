@@ -55,6 +55,7 @@ php occ app:enable figdeckbridge
 
 - Manuelle Synchronisation über die Admin-Oberfläche (`📦 Manuelle Synchronisation`).
 - CLI: `php poll-comments.php`
+- Syntax-Checks: `./dev/run-tests.sh`
 
 ---
 
