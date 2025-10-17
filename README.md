@@ -35,7 +35,7 @@ php occ app:enable figdeckbridge
 
 1. **Figma OAuth** – Trage Client-ID und Secret in den Admin-Einstellungen ein und verbinde die App mit Figma.
 2. **Deck-Zugriff** – Hinterlege in `config.php` die URL deiner Nextcloud sowie Benutzername und App-Passwort des Deck-Accounts.
-3. **Zuordnungen** – Weise Figma-Dateien den passenden Deck-Boards & -Stacks zu. Dies kann entweder über die Admin-Oberfläche erfolgen (speichert unter `mappings.json`) oder direkt in `config.php` über `file_mappings`.
+3. **Zuordnungen** – Weise Figma-Dateien den passenden Deck-Boards & -Stacks zu. Auf der App-Startseite kannst du per Drop-down Deck-Boards, Listen und Figma-Projekte verknüpfen (die Zuordnung landet in `mappings.json`). Alternativ funktioniert weiterhin die Pflege direkt in `config.php` über `file_mappings`.
 4. **Synchronisation** – Starte eine manuelle Synchronisation oder aktiviere den Cron-Modus.
 
 > 💡 Die Datei `poll-comments.php` kann auch auf der Kommandozeile ausgeführt werden. Sie synchronisiert mehrere Figma-Dateien in einem Lauf und erkennt neue Kommentare sowie Antworten automatisch.

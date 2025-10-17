@@ -23,6 +23,30 @@ function loadAppConfig(array $config): array {
 function loadMappings(array $config): array {
     $mappings = [];
 
+    if (class_exists('\\OC')) {
+        try {
+            $appData = \OC::$server->get(\OCP\Files\IAppData::class);
+            try {
+                $folder = $appData->getAppDataFolder('figdeckbridge');
+            } catch (\OCP\Files\NotFoundException $e) {
+                $folder = null;
+            }
+
+            if ($folder) {
+                if ($folder->fileExists('mappings.json')) {
+                    $stored = json_decode($folder->getFile('mappings.json')->getContent(), true);
+                    if (isset($stored['mappings']) && is_array($stored['mappings'])) {
+                        $mappings = $stored['mappings'];
+                    } elseif (is_array($stored)) {
+                        $mappings = $stored;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Fallback erfolgt weiter unten über mapping_file
+        }
+    }
+
     if (!empty($config['file_mappings']) && is_array($config['file_mappings'])) {
         $mappings = $config['file_mappings'];
     } elseif (!empty($config['mapping_file']) && file_exists($config['mapping_file'])) {

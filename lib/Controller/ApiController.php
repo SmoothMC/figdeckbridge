@@ -6,28 +6,34 @@ use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\Http\RedirectResponse;
 use OCP\AppFramework\Http\Attribute\NoCSRFRequired;
-use OCP\IConfig;
-use OCP\IRequest;
-use OCP\IURLGenerator;
+use OCP\Files\Folder;
 use OCP\Files\IAppData;
 use OCP\Files\NotFoundException;
+use OCP\Http\Client\IClient;
+use OCP\IConfig;
+use OCP\ILogger;
+use OCP\IRequest;
+use OCP\IURLGenerator;
 
 class ApiController extends Controller {
     private IConfig $configService;
     private IURLGenerator $urlGen;
     private IAppData $appData;
+    private ILogger $logger;
 
     public function __construct(
         string $appName,
         IRequest $request,
         IConfig $configService,
         IURLGenerator $urlGen,
-        IAppData $appData // ✅ injiziert
+        IAppData $appData, // ✅ injiziert
+        ILogger $logger
     ) {
         parent::__construct($appName, $request);
         $this->configService = $configService;
         $this->urlGen = $urlGen;
         $this->appData = $appData;
+        $this->logger = $logger;
     }
 
     // ------------------------------------------------------
@@ -52,6 +58,123 @@ class ApiController extends Controller {
             \OC::$server->getLogger()->info('[FigDeckBridge] AppData fallback used: ' . $fallbackPath, ['app' => 'figdeckbridge']);
             return $fallbackPath;
         }
+    }
+
+    private function loadBaseConfig(): array {
+        $configPath = __DIR__ . '/../../config.php';
+        $config = [];
+
+        if (file_exists($configPath)) {
+            $config = require $configPath;
+        }
+
+        $keys = [
+            'client_id',
+            'client_secret',
+            'mode',
+            'deck_url',
+            'deck_user',
+            'deck_token',
+            'deck_api_path',
+            'mapping_file'
+        ];
+
+        foreach ($keys as $key) {
+            $value = $this->configService->getAppValue('figdeckbridge', $key, null);
+            if ($value !== null && $value !== '') {
+                $config[$key] = $value;
+            }
+        }
+
+        $config['redirect_uri'] = $this->urlGen->linkToRouteAbsolute('figdeckbridge.api.oauthCallback');
+
+        return $config;
+    }
+
+    private function normalizeMappings(array $entries): array {
+        $normalized = [];
+
+        foreach ($entries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $boardId = isset($entry['board_id']) ? (int)$entry['board_id'] : 0;
+            $stackId = isset($entry['stack_id']) ? (int)$entry['stack_id'] : 0;
+            $fileKey = isset($entry['file_key']) ? trim((string)$entry['file_key']) : '';
+
+            if ($boardId <= 0 || $stackId <= 0 || $fileKey === '') {
+                continue;
+            }
+
+            $normalized[] = [
+                'board_id' => $boardId,
+                'stack_id' => $stackId,
+                'file_key' => $fileKey,
+            ];
+        }
+
+        return $normalized;
+    }
+
+    private function readMappings(array $config): array {
+        $entries = [];
+
+        try {
+            $folder = $this->getOrCreateAppFolder();
+            if (is_string($folder)) {
+                $file = $folder . '/mappings.json';
+                if (file_exists($file)) {
+                    $entries = json_decode(file_get_contents($file), true) ?: [];
+                }
+            } else {
+                if ($folder->fileExists('mappings.json')) {
+                    $entries = json_decode($folder->getFile('mappings.json')->getContent(), true) ?: [];
+                }
+            }
+        } catch (\Throwable $e) {
+            $this->logger->warning('[FigDeckBridge] Could not read mappings from AppData: ' . $e->getMessage(), ['app' => 'figdeckbridge']);
+        }
+
+        if (empty($entries) && !empty($config['mapping_file']) && file_exists($config['mapping_file'])) {
+            $entries = json_decode(file_get_contents($config['mapping_file']), true) ?: [];
+        }
+
+        if (isset($entries['mappings'])) {
+            $entries = $entries['mappings'];
+        }
+
+        if (!is_array($entries)) {
+            $entries = [];
+        }
+
+        return $this->normalizeMappings($entries);
+    }
+
+    private function writeMappings(array $mappings): void {
+        $payload = json_encode(['mappings' => $mappings], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        $folder = $this->getOrCreateAppFolder();
+
+        if ($folder instanceof Folder) {
+            try {
+                if ($folder->fileExists('mappings.json')) {
+                    $folder->getFile('mappings.json')->putContent($payload);
+                } else {
+                    $folder->newFile('mappings.json')->putContent($payload);
+                }
+                return;
+            } catch (\Throwable $e) {
+                $this->logger->warning('[FigDeckBridge] Failed to write mappings to AppData folder: ' . $e->getMessage(), ['app' => 'figdeckbridge']);
+            }
+        }
+
+        if (is_string($folder)) {
+            file_put_contents(rtrim($folder, '/') . '/mappings.json', $payload);
+        }
+    }
+
+    private function createHttpClient(): IClient {
+        return \OC::$server->getHTTPClientService()->newClient();
     }
 
     // ------------------------------------------------------
@@ -90,6 +213,24 @@ class ApiController extends Controller {
         }
     }
 
+    /**
+     * Liste aller gespeicherten Zuordnungen abrufen
+     */
+    public function getMappings(): DataResponse {
+        try {
+            $config = $this->loadBaseConfig();
+            $mappings = $this->readMappings($config);
+
+            return new DataResponse([
+                'ok' => true,
+                'mappings' => $mappings,
+            ]);
+        } catch (\Throwable $e) {
+            $this->logger->error('[FigDeckBridge] getMappings failed: ' . $e->getMessage(), ['app' => 'figdeckbridge']);
+            return new DataResponse(['ok' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
     // ------------------------------------------------------
     // 💾 Konfiguration speichern
     // ------------------------------------------------------
@@ -111,6 +252,225 @@ class ApiController extends Controller {
             return new DataResponse(['ok' => true]);
         } catch (\Throwable $e) {
             \OC::$server->getLogger()->error('[FigDeckBridge] saveConfig failed: ' . $e->getMessage(), ['app' => 'figdeckbridge']);
+            return new DataResponse(['ok' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Zuordnungen speichern (Liste von Board ↔︎ Figma)
+     */
+    public function saveMapping(): DataResponse {
+        try {
+            $input = json_decode(file_get_contents('php://input'), true) ?? [];
+            $mappings = $this->normalizeMappings($input['mappings'] ?? []);
+
+            $this->writeMappings($mappings);
+
+            return new DataResponse(['ok' => true, 'mappings' => $mappings]);
+        } catch (\Throwable $e) {
+            $this->logger->error('[FigDeckBridge] saveMapping failed: ' . $e->getMessage(), ['app' => 'figdeckbridge']);
+            return new DataResponse(['ok' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Deck-Boards abrufen (Name & ID)
+     */
+    public function getDeckBoards(): DataResponse {
+        try {
+            $config = $this->loadBaseConfig();
+            $base = rtrim($config['deck_url'] ?? '', '/');
+            $user = $config['deck_user'] ?? '';
+            $token = $config['deck_token'] ?? '';
+
+            if ($base === '' || $user === '' || $token === '') {
+                return new DataResponse([
+                    'ok' => false,
+                    'error' => 'Deck Zugangsdaten fehlen.',
+                ], 400);
+            }
+
+            $apiPath = $config['deck_api_path'] ?? '/index.php/apps/deck/api/v1.1';
+            $url = $base . $apiPath . '/boards';
+
+            $client = $this->createHttpClient();
+            $response = $client->get($url, [
+                'auth' => [$user, $token],
+                'headers' => [
+                    'OCS-APIRequest' => 'true',
+                    'Accept' => 'application/json',
+                ],
+                'timeout' => 15,
+            ]);
+
+            $data = json_decode($response->getBody(), true);
+            $boards = [];
+
+            if (is_array($data)) {
+                foreach ($data as $board) {
+                    $boards[] = [
+                        'id' => (int)($board['id'] ?? 0),
+                        'title' => $board['title'] ?? 'Unbenanntes Board',
+                    ];
+                }
+            }
+
+            return new DataResponse(['ok' => true, 'boards' => $boards]);
+        } catch (\Throwable $e) {
+            $this->logger->error('[FigDeckBridge] getDeckBoards failed: ' . $e->getMessage(), ['app' => 'figdeckbridge']);
+            return new DataResponse(['ok' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Stacks für ein bestimmtes Board abrufen
+     */
+    public function getDeckStacks(int $boardId): DataResponse {
+        try {
+            $config = $this->loadBaseConfig();
+            $base = rtrim($config['deck_url'] ?? '', '/');
+            $user = $config['deck_user'] ?? '';
+            $token = $config['deck_token'] ?? '';
+
+            if ($base === '' || $user === '' || $token === '') {
+                return new DataResponse([
+                    'ok' => false,
+                    'error' => 'Deck Zugangsdaten fehlen.',
+                ], 400);
+            }
+
+            $apiPath = $config['deck_api_path'] ?? '/index.php/apps/deck/api/v1.1';
+            $url = $base . $apiPath . '/boards/' . $boardId . '/stacks';
+
+            $client = $this->createHttpClient();
+            $response = $client->get($url, [
+                'auth' => [$user, $token],
+                'headers' => [
+                    'OCS-APIRequest' => 'true',
+                    'Accept' => 'application/json',
+                ],
+                'timeout' => 15,
+            ]);
+
+            $data = json_decode($response->getBody(), true);
+            $stacks = [];
+
+            if (is_array($data)) {
+                foreach ($data as $stack) {
+                    $stacks[] = [
+                        'id' => (int)($stack['id'] ?? 0),
+                        'title' => $stack['title'] ?? 'Unbenannter Stack',
+                    ];
+                }
+            }
+
+            return new DataResponse(['ok' => true, 'stacks' => $stacks]);
+        } catch (\Throwable $e) {
+            $this->logger->error('[FigDeckBridge] getDeckStacks failed: ' . $e->getMessage(), ['app' => 'figdeckbridge']);
+            return new DataResponse(['ok' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Figma-Projekte und -Dateien abrufen
+     */
+    public function getFigmaFiles(): DataResponse {
+        try {
+            $config = $this->loadBaseConfig();
+
+            require_once __DIR__ . '/../../deck-api.php';
+            $token = getFigmaAccessToken($config);
+
+            if (!$token) {
+                return new DataResponse([
+                    'ok' => false,
+                    'error' => 'Figma ist nicht verbunden.',
+                ], 401);
+            }
+
+            $client = $this->createHttpClient();
+
+            $teamsRes = $client->get('https://api.figma.com/v1/me/teams', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $token,
+                    'Accept' => 'application/json',
+                ],
+                'timeout' => 20,
+            ]);
+
+            $teamsData = json_decode($teamsRes->getBody(), true);
+            $projects = [];
+
+            if (isset($teamsData['teams']) && is_array($teamsData['teams'])) {
+                foreach ($teamsData['teams'] as $team) {
+                    $teamId = $team['team_id'] ?? $team['id'] ?? null;
+                    if (!$teamId) {
+                        continue;
+                    }
+
+                    $teamName = $team['name'] ?? 'Team ' . $teamId;
+
+                    try {
+                        $projRes = $client->get('https://api.figma.com/v1/teams/' . $teamId . '/projects', [
+                            'headers' => [
+                                'Authorization' => 'Bearer ' . $token,
+                                'Accept' => 'application/json',
+                            ],
+                            'timeout' => 20,
+                        ]);
+
+                        $projData = json_decode($projRes->getBody(), true);
+                        if (!isset($projData['projects']) || !is_array($projData['projects'])) {
+                            continue;
+                        }
+
+                        foreach ($projData['projects'] as $project) {
+                            $projectId = $project['id'] ?? null;
+                            if (!$projectId) {
+                                continue;
+                            }
+
+                            $files = [];
+
+                            try {
+                                $filesRes = $client->get('https://api.figma.com/v1/projects/' . $projectId . '/files', [
+                                    'headers' => [
+                                        'Authorization' => 'Bearer ' . $token,
+                                        'Accept' => 'application/json',
+                                    ],
+                                    'timeout' => 20,
+                                ]);
+                                $filesData = json_decode($filesRes->getBody(), true);
+                                if (isset($filesData['files']) && is_array($filesData['files'])) {
+                                    foreach ($filesData['files'] as $file) {
+                                        $files[] = [
+                                            'key' => $file['key'] ?? '',
+                                            'name' => $file['name'] ?? 'Unbenannte Datei',
+                                            'last_modified' => $file['last_modified'] ?? null,
+                                        ];
+                                    }
+                                }
+                            } catch (\Throwable $inner) {
+                                $this->logger->warning('[FigDeckBridge] Failed to fetch files for project ' . $projectId . ': ' . $inner->getMessage(), ['app' => 'figdeckbridge']);
+                            }
+
+                            $projects[] = [
+                                'id' => (string)$projectId,
+                                'name' => $project['name'] ?? 'Unbenanntes Projekt',
+                                'teamId' => (string)$teamId,
+                                'teamName' => $teamName,
+                                'files' => $files,
+                            ];
+                        }
+                    } catch (\Throwable $inner) {
+                        $this->logger->warning('[FigDeckBridge] Failed to fetch projects for team ' . $teamId . ': ' . $inner->getMessage(), ['app' => 'figdeckbridge']);
+                    }
+                }
+            }
+
+            return new DataResponse(['ok' => true, 'projects' => $projects]);
+        } catch (\Throwable $e) {
+            $this->logger->error('[FigDeckBridge] getFigmaFiles failed: ' . $e->getMessage(), ['app' => 'figdeckbridge']);
             return new DataResponse(['ok' => false, 'error' => $e->getMessage()], 500);
         }
     }
