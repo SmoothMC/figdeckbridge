@@ -5,6 +5,7 @@ namespace OCA\FigDeckBridge\Settings;
 use OCP\AppFramework\Http\TemplateResponse;
 use OCP\IConfig;
 use OCP\Settings\ISettings;
+use OCP\Files\IAppDataFactory;
 use OCP\Files\NotFoundException;
 
 class Admin implements ISettings {
@@ -18,9 +19,9 @@ class Admin implements ISettings {
         $connected = false;
 
         try {
-            // Zugriff auf AppData über Server-Container (kompatibel mit NC 27–30)
-            $appData = \OC::$server->get(\OCP\Files\IAppData::class);
-            $folder = $appData->getFolder('figdeckbridge');
+            // Zugriff auf AppData über Factory (kompatibel mit NC 25+)
+            $factory = \OC::$server->get(\OCP\Files\IAppDataFactory::class);
+            $folder = $factory->get('figdeckbridge');
             $connected = $folder->fileExists('figma_token.json');
         } catch (NotFoundException $e) {
             $connected = false;

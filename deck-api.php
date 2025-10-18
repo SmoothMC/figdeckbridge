@@ -12,9 +12,67 @@ function getFigmaAccessToken($config) {
     $clientSecret = $config['client_secret'] ?? '';
     $redirectUri = $config['redirect_uri'] ?? '';
 
-    if (!file_exists($tokenFile)) return null;
+    $data = null;
+    $saveToken = null;
 
-    $data = json_decode(file_get_contents($tokenFile), true);
+    if (is_readable($tokenFile)) {
+        $contents = file_get_contents($tokenFile);
+        $data = $contents !== false ? json_decode($contents, true) : null;
+        $saveToken = function (array $payload) use ($tokenFile): void {
+            file_put_contents($tokenFile, json_encode($payload, JSON_PRETTY_PRINT));
+        };
+    }
+
+    if (!$data && class_exists('\\OC')) {
+        try {
+            $factory = \OC::$server->get(\OCP\Files\IAppDataFactory::class);
+            $folder = $factory->get('figdeckbridge');
+
+            if ($folder->fileExists('figma_token.json')) {
+                $file = $folder->getFile('figma_token.json');
+                $data = json_decode($file->getContent(), true);
+            }
+
+            if ($data) {
+                $saveToken = function (array $payload) use ($folder): void {
+                    $json = json_encode($payload, JSON_PRETTY_PRINT);
+                    if ($folder->fileExists('figma_token.json')) {
+                        $folder->getFile('figma_token.json')->putContent($json);
+                    } else {
+                        $folder->newFile('figma_token.json')->putContent($json);
+                    }
+                };
+            }
+        } catch (\Throwable $e) {
+            // ignore – we'll fall back to filesystem lookups below
+        }
+
+        if (!$data) {
+            try {
+                $configService = \OC::$server->getConfig();
+                $dataDir = $configService->getSystemValue('datadirectory', '');
+                $instanceId = \OC::$server->getSystemConfig()->getValue('instanceid', '');
+                if ($dataDir && $instanceId) {
+                    $fallbackPath = rtrim($dataDir, '/') . "/appdata_{$instanceId}/figdeckbridge/figma_token.json";
+                    if (is_readable($fallbackPath)) {
+                        $contents = file_get_contents($fallbackPath);
+                        $data = $contents !== false ? json_decode($contents, true) : null;
+                        if ($data) {
+                            $saveToken = function (array $payload) use ($fallbackPath): void {
+                                if (!is_dir(dirname($fallbackPath))) {
+                                    mkdir(dirname($fallbackPath), 0770, true);
+                                }
+                                file_put_contents($fallbackPath, json_encode($payload, JSON_PRETTY_PRINT));
+                            };
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                // ignore and keep default behaviour
+            }
+        }
+    }
+
     if (!$data) return null;
 
     $expiresIn = $data['expires_in'] ?? 3600;
@@ -46,7 +104,12 @@ function getFigmaAccessToken($config) {
     if (!$newData || !isset($newData['access_token'])) return null;
 
     $newData['created_at'] = time();
-    file_put_contents($tokenFile, json_encode($newData, JSON_PRETTY_PRINT));
+
+    if ($saveToken) {
+        $saveToken($newData);
+    } else {
+        file_put_contents($tokenFile, json_encode($newData, JSON_PRETTY_PRINT));
+    }
 
     return $newData['access_token'];
 }
@@ -82,20 +145,22 @@ function deck_api_base($config) {
 }
 
 // ------------------------------------------------------
-// DECK: Karte anlegen + Kommentare + Screenshot
+// Hilfsfunktion: Deck-Karte anhand des Root-Kommentars ermitteln
 // ------------------------------------------------------
-function createDeckCard($rootUser, $rootMessage, $fileUrl, $imageUrl, $config, $children = []) {
+function deck_ensure_card(array $config, array $rootComment) {
     $deckUrl  = deck_api_base($config);
     $boardId  = $config['board_id'];
     $stackId  = $config['stack_id'];
     $username = $config['deck_user'];
     $token    = $config['deck_token'];
 
-    // --- Titel generieren
+    $rootMessage = (string)($rootComment['message'] ?? '');
     $title = trim(mb_substr(preg_split('/[.!?]/u', $rootMessage)[0] ?? $rootMessage, 0, 255));
+    if ($title === '') {
+        $title = 'Figma-Kommentar';
+    }
     $normalizedTitle = mb_strtolower(trim(html_entity_decode($title)));
 
-    // --- Prüfen, ob Karte bereits existiert
     $existingId = null;
     $cardsUrl = "$deckUrl/boards/$boardId/cards";
     $ch = curl_init($cardsUrl);
@@ -110,7 +175,9 @@ function createDeckCard($rootUser, $rootMessage, $fileUrl, $imageUrl, $config, $
     $cards = json_decode($res, true);
     if (is_array($cards)) {
         foreach ($cards as $c) {
-            if (($c['stackId'] ?? null) != $stackId) continue;
+            if (($c['stackId'] ?? null) != $stackId) {
+                continue;
+            }
             $compareTitle = mb_strtolower(trim(html_entity_decode($c['title'] ?? '')));
             if ($compareTitle === $normalizedTitle) {
                 $existingId = $c['id'];
@@ -119,59 +186,101 @@ function createDeckCard($rootUser, $rootMessage, $fileUrl, $imageUrl, $config, $
         }
     }
 
-    // --- Karte anlegen, wenn nicht vorhanden
     if ($existingId) {
-        $cardId = $existingId;
+        return [$existingId, false, $title];
+    }
+
+    $fileUrl  = $rootComment['file_url'] ?? '';
+    $rootUser = $rootComment['user']['handle'] ?? 'Unbekannt';
+    $desc = "👤 **$rootUser**\n\n" . trim($rootMessage);
+    if ($fileUrl) {
+        $desc .= "\n\n🔗 [Figma öffnen]($fileUrl)";
+    }
+
+    $cardUrl = "$deckUrl/boards/$boardId/stacks/$stackId/cards";
+    $payload = json_encode([
+        'title' => $title,
+        'description' => $desc,
+        'type' => 'plain'
+    ]);
+
+    $ch = curl_init($cardUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_USERPWD => "$username:$token",
+        CURLOPT_HTTPHEADER => ['OCS-APIRequest: true', 'Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => $payload
+    ]);
+    $response = curl_exec($ch);
+    curl_close($ch);
+    $data = json_decode($response, true);
+    $cardId = $data['id'] ?? null;
+
+    if (!$cardId) {
+        return false;
+    }
+
+    return [$cardId, true, $title];
+}
+
+// ------------------------------------------------------
+// Kommentar aus Figma nach Deck übertragen
+// ------------------------------------------------------
+function deck_add_figma_comment(array $config, int $cardId, array $comment) {
+    $msgUser = $comment['user']['handle'] ?? 'Unbekannt';
+    $msgText = trim($comment['message'] ?? '');
+    if ($msgText === '') {
+        return;
+    }
+
+    $created = !empty($comment['created_at'])
+        ? date('d.m.Y H:i', strtotime($comment['created_at']))
+        : date('d.m.Y H:i');
+
+    $finalMessage = "$msgText\n($created)";
+    deck_add_comment($config, $config['board_id'], $config['stack_id'], $cardId, $finalMessage, $msgUser);
+}
+
+// ------------------------------------------------------
+// Vollständigen Kommentar-Thread synchronisieren
+// ------------------------------------------------------
+function syncDeckThread(array $config, array $thread) {
+    if (empty($thread['root'])) {
+        return false;
+    }
+
+    $ensure = deck_ensure_card($config, $thread['root']);
+    if (!$ensure) {
+        return false;
+    }
+
+    [$cardId] = $ensure;
+
+    if (!empty($thread['newRoot']) && $thread['newRoot']) {
+        deck_add_figma_comment($config, $cardId, $thread['root']);
+
+        foreach ($thread['children'] as $child) {
+            deck_add_figma_comment($config, $cardId, $child);
+        }
+
+        $imageUrl = $thread['root']['client_meta']['snapshot_url'] ?? '';
+        if ($imageUrl) {
+            $tmp = tempnam(sys_get_temp_dir(), 'figma_');
+            if ($tmp && file_put_contents($tmp, @file_get_contents($imageUrl)) !== false) {
+                deck_add_attachment($config, $config['board_id'], $config['stack_id'], $cardId, $tmp);
+            }
+            if ($tmp && file_exists($tmp)) {
+                unlink($tmp);
+            }
+        }
     } else {
-        $desc = "👤 **$rootUser**\n\n" . trim($rootMessage) . "\n\n🔗 [Figma öffnen]($fileUrl)";
-        $cardUrl = "$deckUrl/boards/$boardId/stacks/$stackId/cards";
-        $payload = json_encode([
-            'title' => $title,
-            'description' => $desc,
-            'type' => 'plain'
-        ]);
-
-        $ch = curl_init($cardUrl);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_USERPWD => "$username:$token",
-            CURLOPT_HTTPHEADER => ['OCS-APIRequest: true', 'Content-Type: application/json'],
-            CURLOPT_POSTFIELDS => $payload
-        ]);
-        $response = curl_exec($ch);
-        curl_close($ch);
-        $data = json_decode($response, true);
-        $cardId = $data['id'] ?? null;
+        foreach ($thread['newReplies'] as $reply) {
+            deck_add_figma_comment($config, $cardId, $reply);
+        }
     }
 
-    if (!$cardId) return false;
-
-    // --- Kommentare hinzufügen (Root + Replies)
-    $allComments = array_merge(
-        [[ 'user' => ['handle' => $rootUser], 'message' => $rootMessage, 'created_at' => date('c') ]],
-        $children
-    );
-
-    foreach ($allComments as $cmt) {
-        $msgUser = $cmt['user']['handle'] ?? 'Unbekannt';
-        $msgText = trim($cmt['message'] ?? '');
-        $created = !empty($cmt['created_at'])
-            ? date('d.m.Y H:i', strtotime($cmt['created_at']))
-            : date('d.m.Y H:i');
-        $finalMessage = "$msgText\n($created)";
-        deck_add_comment($config, $boardId, $stackId, $cardId, $finalMessage, $msgUser);
-    }
-
-    // --- Screenshot anhängen
-    if ($imageUrl) {
-        $tmp = sys_get_temp_dir() . '/figma-comment.png';
-        file_put_contents($tmp, file_get_contents($imageUrl));
-        deck_add_attachment($config, $boardId, $stackId, $cardId, $tmp);
-        unlink($tmp);
-    }
-
-    return $cardId;
+    return true;
 }
 
 // ------------------------------------------------------
