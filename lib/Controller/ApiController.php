@@ -7,8 +7,7 @@ use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\Http\RedirectResponse;
 use OCP\AppFramework\Http\Attribute\NoCSRFRequired;
 use OCP\Files\Folder;
-use OCP\Files\IAppData;
-use OCP\Files\NotFoundException;
+use OCP\Files\IAppDataFactory;
 use OCP\Http\Client\IClient;
 use OCP\IConfig;
 use OCP\ILogger;
@@ -18,7 +17,7 @@ use OCP\IURLGenerator;
 class ApiController extends Controller {
     private IConfig $configService;
     private IURLGenerator $urlGen;
-    private IAppData $appData;
+    private IAppDataFactory $appDataFactory;
     private ILogger $logger;
 
     public function __construct(
@@ -26,13 +25,13 @@ class ApiController extends Controller {
         IRequest $request,
         IConfig $configService,
         IURLGenerator $urlGen,
-        IAppData $appData, // ✅ injiziert
+        IAppDataFactory $appDataFactory,
         ILogger $logger
     ) {
         parent::__construct($appName, $request);
         $this->configService = $configService;
         $this->urlGen = $urlGen;
-        $this->appData = $appData;
+        $this->appDataFactory = $appDataFactory;
         $this->logger = $logger;
     }
 
@@ -41,10 +40,7 @@ class ApiController extends Controller {
     // ------------------------------------------------------
     private function getOrCreateAppFolder() {
         try {
-            return $this->appData->getAppDataFolder('figdeckbridge');
-        } catch (NotFoundException $e) {
-            \OC::$server->getLogger()->warning('[FigDeckBridge] AppData folder missing, creating via newFolder()', ['app' => 'figdeckbridge']);
-            return $this->appData->newFolder('figdeckbridge');
+            return $this->appDataFactory->get('figdeckbridge');
         } catch (\Throwable $e) {
             // 🧩 Fallback: direkt im Dateisystem anlegen
             $dataDir = \OC::$server->getConfig()->getSystemValue('datadirectory', '');

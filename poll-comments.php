@@ -25,21 +25,15 @@ function loadMappings(array $config): array {
 
     if (class_exists('\\OC')) {
         try {
-            $appData = \OC::$server->get(\OCP\Files\IAppData::class);
-            try {
-                $folder = $appData->getAppDataFolder('figdeckbridge');
-            } catch (\OCP\Files\NotFoundException $e) {
-                $folder = null;
-            }
+            $factory = \OC::$server->get(\OCP\Files\IAppDataFactory::class);
+            $folder = $factory->get('figdeckbridge');
 
-            if ($folder) {
-                if ($folder->fileExists('mappings.json')) {
-                    $stored = json_decode($folder->getFile('mappings.json')->getContent(), true);
-                    if (isset($stored['mappings']) && is_array($stored['mappings'])) {
-                        $mappings = $stored['mappings'];
-                    } elseif (is_array($stored)) {
-                        $mappings = $stored;
-                    }
+            if ($folder->fileExists('mappings.json')) {
+                $stored = json_decode($folder->getFile('mappings.json')->getContent(), true);
+                if (isset($stored['mappings']) && is_array($stored['mappings'])) {
+                    $mappings = $stored['mappings'];
+                } elseif (is_array($stored)) {
+                    $mappings = $stored;
                 }
             }
         } catch (\Throwable $e) {

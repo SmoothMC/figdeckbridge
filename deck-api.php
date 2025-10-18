@@ -25,8 +25,8 @@ function getFigmaAccessToken($config) {
 
     if (!$data && class_exists('\\OC')) {
         try {
-            $appData = \OC::$server->get(\OCP\Files\IAppData::class);
-            $folder = $appData->getAppDataFolder('figdeckbridge');
+            $factory = \OC::$server->get(\OCP\Files\IAppDataFactory::class);
+            $folder = $factory->get('figdeckbridge');
 
             if ($folder->fileExists('figma_token.json')) {
                 $file = $folder->getFile('figma_token.json');
